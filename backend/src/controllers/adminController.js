@@ -186,3 +186,19 @@ exports.importSupplierProductsExcel = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: String(err.message || err) });
   }
 };
+
+// LIST SUPPLIERS (for Admin dashboard)
+exports.listSuppliers = async (req, res) => {
+  try {
+    const suppliers = await Supplier.findAll({
+      attributes: ["id", "company_name", "active", "user_id"],
+      order: [["id", "ASC"]],
+    });
+
+    return res.json({ suppliers });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+

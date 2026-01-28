@@ -21,5 +21,11 @@ router.post(
   adminController.importSupplierProductsExcel
 );
 
+router.get(
+  "/suppliers",
+  authMiddleware,
+  roleMiddleware("admin"),
+  adminController.listSuppliers
+);
 
 module.exports = router;
