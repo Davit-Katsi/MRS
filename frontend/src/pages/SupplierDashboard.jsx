@@ -10,13 +10,13 @@ export default function SupplierDashboard() {
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [listErr, setListErr] = useState("");
+  const [formErr, setFormErr] = useState("");
 
   // single price form
   const [product_code, setProductCode] = useState("");
   const [price, setPrice] = useState("");
   const [currency, setCurrency] = useState("GEL");
-  const [effective_date, setEffectiveDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [msg, setMsg] = useState("");
 
   // bulk excel upload
@@ -26,6 +26,11 @@ export default function SupplierDashboard() {
   const [bulkResult, setBulkResult] = useState(null);
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
 
+  function todayTbilisiYMD() {
+    const now = new Date();
+    const tbilisi = new Date(now.getTime() + 4 * 60 * 60 * 1000); // UTC+4
+    return tbilisi.toISOString().slice(0, 10);
+  }
   // --- UI styles (same as login/admin theme) ---
   const UI = {
     page: { padding: 16, background: "#fff", minHeight: "100vh" },
@@ -63,6 +68,15 @@ export default function SupplierDashboard() {
       fontSize: 13,
     }),
 
+    msgBox: (type) => ({
+      color: type === "error" ? "crimson" : "green",
+      border: "1px solid #e5e5e5",
+      background: type === "error" ? "#fff5f5" : "#f6fff6",
+      padding: "10px 12px",
+      borderRadius: 8,
+      fontSize: 13,
+    }),
+
     muted: { fontSize: 12, opacity: 0.75 },
   };
 
@@ -80,13 +94,13 @@ export default function SupplierDashboard() {
   }
 
   async function loadMyProducts() {
-    setErr("");
+    setListErr("");
     setLoading(true);
     try {
       const res = await api.get("/api/supplier/products");
       setProducts(res.data.products || []);
     } catch (e) {
-      setErr(e?.response?.data?.message || "Failed to load products");
+      setListErr(e?.response?.data?.message || "Failed to load products");
     } finally {
       setLoading(false);
     }
@@ -96,39 +110,55 @@ export default function SupplierDashboard() {
     loadMyProducts();
   }, []);
 
+  function normalizePrice(v) {
+    return String(v || "").trim().replace(",", ".");
+  }
+
   async function submitPrice(e) {
     e.preventDefault();
-    setErr("");
+    setFormErr("");
     setMsg("");
 
-    try {
-      const res = await api.post("/api/supplier/prices", {
-        product_code,
-        price,
-        currency,
-        effective_date,
-      });
+    const normalized = normalizePrice(price);
+    const n = Number(normalized);
+    if (!Number.isFinite(n) || n < 0) {
+      setFormErr("ფასი არასწორია");
+      return;
+    }
 
-      setMsg(res.data?.message || "შენახულია");
+
+
+
+    try {
+    const today = todayTbilisiYMD();
+
+    const res = await api.post("/api/supplier/prices", {
+      product_code,
+      price: normalized,
+      currency,
+      effective_date: today,
+    });
+
+      setMsg(res.data?.message || "ფასი შენახულია");
       setPrice("");
 
-      // refresh list so latest price appears
       await loadMyProducts();
     } catch (e2) {
-      setErr(e2?.response?.data?.message || "Failed to submit price");
+      setFormErr(e2?.response?.data?.message || "Failed to submit price");
     }
   }
 
-  function normHeader(v) {
-    return String(v ?? "").trim().toLowerCase();
-  }
+      useEffect(() => {
+        if (!msg) return;
+        const t = setTimeout(() => setMsg(""), 3000);
+        return () => clearTimeout(t);
+    }, [msg]);
 
-  function excelSerialToISODate(serial) {
-    const utcDays = Math.floor(Number(serial) - 25569);
-    const utcValue = utcDays * 86400;
-    const dateInfo = new Date(utcValue * 1000);
-    return dateInfo.toISOString().slice(0, 10);
-  }
+    useEffect(() => {
+      if (!bulkResult) return;
+      const t = setTimeout(() => setBulkResult(null), 3000);
+      return () => clearTimeout(t);
+    }, [bulkResult]);
 
   function cellToString(cellValue) {
     if (cellValue == null) return "";
@@ -141,6 +171,34 @@ export default function SupplierDashboard() {
     }
     return String(cellValue);
   }
+  
+  function normHeader(v) {
+    // ExcelJS cell values can be string/number/object
+    const s = String(v ?? "")
+      .trim()
+      .toLowerCase();
+
+    // normalize: spaces/dashes -> underscore
+    const normalized = s
+      .replace(/\s+/g, "_")
+      .replace(/-+/g, "_");
+
+    // map common header variants to what backend expects
+    if (normalized === "productcode") return "product_code";
+    if (normalized === "product_code") return "product_code";
+    if (normalized === "price") return "price";
+    if (normalized === "currency") return "currency";
+    if (normalized === "effective_date" || normalized === "effectivedate" || normalized === "effective") return "effective_date";
+
+    return normalized;
+  }
+
+    function formatYMD(v) {
+    if (!v) return "—";
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    return String(v).slice(0, 10);
+  }
+
 
   async function submitBulkPrices(e) {
     e.preventDefault();
@@ -153,6 +211,7 @@ export default function SupplierDashboard() {
     setBulkProgress({ done: 0, total: 0 });
 
     try {
+      const today = todayTbilisiYMD();
       const buf = await bulkFile.arrayBuffer();
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(buf);
@@ -186,17 +245,7 @@ export default function SupplierDashboard() {
         const currencyVal = colIndex["currency"] ? row.getCell(colIndex["currency"])?.value : "GEL";
         const currency = String(cellToString(currencyVal) || "GEL").trim().toUpperCase();
 
-        let effVal = colIndex["effective_date"] ? row.getCell(colIndex["effective_date"])?.value : "";
-        let effective_date = "";
-
-        if (effVal instanceof Date) effective_date = effVal.toISOString().slice(0, 10);
-        else if (typeof effVal === "number") effective_date = excelSerialToISODate(effVal);
-        else effective_date = String(cellToString(effVal)).trim();
-
-        if (!effective_date) effective_date = new Date().toISOString().slice(0, 10);
-
-        const looksEmpty = !product_code && !price && !currency && !effective_date;
-        if (looksEmpty) return;
+        const effective_date = today;
 
         rows.push({ product_code, price, currency, effective_date, _row: rowNumber });
       });
@@ -217,7 +266,7 @@ export default function SupplierDashboard() {
           product_code: r.product_code,
           price: r.price,
           currency: r.currency,
-          effective_date: r.effective_date,
+          effective_date: today,
         });
       });
 
@@ -304,7 +353,7 @@ export default function SupplierDashboard() {
           </button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
           {/* LEFT: PRODUCTS */}
           <div style={UI.card}>
             <div
@@ -323,7 +372,7 @@ export default function SupplierDashboard() {
               </button>
             </div>
 
-            {err ? <div style={{ color: "crimson", marginBottom: 10, fontSize: 13 }}>{err}</div> : null}
+            {listErr ? <div style={UI.msgBox("error")}>{listErr}</div> : null}
 
             <div style={{ maxHeight: 520, overflow: "auto", border: "1px solid #eee", borderRadius: 8 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -357,7 +406,7 @@ export default function SupplierDashboard() {
                         <td style={cell}>{p.name}</td>
                         <td style={cell}>{p.unit}</td>
                         <td style={cell}>{myPriceText}</td>
-                        <td style={cell}>{p.latest_effective_date ? String(p.latest_effective_date) : "—"}</td>
+                        <td style={cell}>{formatYMD(p.latest_effective_date)}</td>
                       </tr>
                     );
                   })}
@@ -398,13 +447,8 @@ export default function SupplierDashboard() {
                 </select>
               </div>
 
-              <div style={{ display: "grid", gap: 6 }}>
-                <label style={{ fontSize: 13 }}>ბოლო განახლება</label>
-                <input type="date" value={effective_date} onChange={(e) => setEffectiveDate(e.target.value)} required style={UI.input} />
-              </div>
-
-              {msg ? <div style={{ color: "green", fontSize: 13 }}>{msg}</div> : null}
-              {err ? <div style={{ color: "crimson", fontSize: 13 }}>{err}</div> : null}
+              {msg ? <div style={UI.msgBox("ok")}>{msg}</div> : null}
+              {formErr ? <div style={UI.msgBox("error")}>{formErr}</div> : null}
 
               <button style={UI.buttonFull(false)}>შენახვა</button>
             </form>
@@ -449,20 +493,73 @@ export default function SupplierDashboard() {
               </button>
             </form>
 
-            {bulkResult ? (
-              <div
-                style={{
-                  marginTop: 12,
-                  fontSize: 13,
-                  padding: 10,
-                  borderRadius: 8,
-                  border: "1px solid #e5e5e5",
-                  background: "#f7f7f7",
-                }}
-              >
-                <b>აიტვირთა წარმატებით</b>
-              </div>
-            ) : null}
+{bulkResult ? (
+  <div
+    style={{
+      marginTop: 12,
+      fontSize: 13,
+      padding: 10,
+      borderRadius: 8,
+      border: "1px solid #e5e5e5",
+      background: "#f7f7f7",
+    }}
+  >
+      {bulkResult ? (
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: 13,
+            padding: 10,
+            borderRadius: 8,
+            border: "1px solid #e5e5e5",
+            background: "#f7f7f7",
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>ფაილი წარმატებით აიტვირთა</div>
+
+          <div style={{ marginBottom: 6 }}>
+            განახლებულია <b>{bulkResult.uploaded}</b> პროდუქტის ფასი
+          </div>
+
+          <div>ჩავარდა: <b>{bulkResult.failed}</b></div>
+          <div>გამოტოვებულია: <b>{bulkResult.skipped}</b></div>
+        </div>
+      ) : null}
+
+    {(bulkResult.failedDetails?.length || bulkResult.invalid?.length) ? (
+      <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+        {bulkResult.failedDetails?.length ? (
+          <details>
+            <summary style={{ cursor: "pointer" }}>ჩავარდნილი ჩანაწერები</summary>
+            <ul style={{ marginTop: 6 }}>
+              {bulkResult.failedDetails.slice(0, 20).map((x, i) => (
+                <li key={i}>
+                  {x.payload?.product_code} — {x.message}
+                </li>
+              ))}
+              {bulkResult.failedDetails.length > 20 ? <li>… (მეტი შედეგი truncated)</li> : null}
+            </ul>
+          </details>
+        ) : null}
+
+              {bulkResult.invalid?.length ? (
+                <details>
+                  <summary style={{ cursor: "pointer" }}>გამოტოვებული რიგები (invalid)</summary>
+                  <ul style={{ marginTop: 6 }}>
+                    {bulkResult.invalid.slice(0, 20).map((x, i) => (
+                      <li key={i}>
+                        Row #{x.row} — {x.reason} (კოდი: {x.data?.product_code || "—"})
+                      </li>
+                    ))}
+                    {bulkResult.invalid.length > 20 ? <li>… (მეტი შედეგი truncated)</li> : null}
+                  </ul>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
           </div>
         </div>
       </div>

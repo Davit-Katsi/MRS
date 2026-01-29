@@ -74,8 +74,26 @@ exports.submitPriceUpdate = async (req, res) => {
     const { product_code, price, currency, effective_date } = req.body || {};
 
     if (!supplierId) return res.status(400).json({ message: "Supplier account not linked" });
-    if (!product_code || !price || !currency || !effective_date) {
-      return res.status(400).json({ message: "product_code, price, currency, effective_date are required" });
+    if (!product_code || !price || !currency) {
+      return res.status(400).json({ message: "product_code, price, currency are required" });
+    }
+
+    const eff = effective_date || new Date().toISOString().slice(0, 10);
+
+    // ✅ extra validation (recommended)
+    const nPrice = Number(String(price).replace(",", "."));
+    if (!Number.isFinite(nPrice) || nPrice < 0) {
+      return res.status(400).json({ message: "ფასი არასწორია" });
+    }
+
+    const cur = String(currency).toUpperCase();
+    const allowed = new Set(["GEL", "USD", "EUR"]);
+    if (!allowed.has(cur)) {
+      return res.status(400).json({ message: "ვალუტა არასწორია" });
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(eff))) {
+      return res.status(400).json({ message: "თარიღი არასწორია (YYYY-MM-DD)" });
     }
 
     // ensure assigned product
@@ -91,14 +109,15 @@ exports.submitPriceUpdate = async (req, res) => {
     const created = await PriceUpdate.create({
       supplier_id: supplierId,
       product_id: link.Product.id,
-      price,
-      currency: String(currency).toUpperCase(),
-      effective_date,
+      price: nPrice,
+      currency: cur,
+      effective_date: eff,
       source: "portal",
       created_by: userId,
     });
 
-    return res.status(201).json({ message: "Price update saved", id: created.id });
+    // ✅ Georgian success message
+    return res.status(201).json({ message: "ფასი შენახულია", id: created.id });
   } catch (err) {
     console.error("submitPriceUpdate error:", err);
     return res.status(500).json({ message: "Server error" });
