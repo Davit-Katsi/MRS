@@ -6,12 +6,16 @@ import SupplierDashboard from "./pages/SupplierDashboard";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import { getRole, isLoggedIn } from "./auth/auth";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomeRedirect />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       {/* Admin-only */}
       <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
